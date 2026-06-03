@@ -1125,6 +1125,16 @@ function MessagePanel({ showToast }) {
     load();
   }, []);
 
+  const generateLocal = (prospect, type) => {
+    const name = prospect.contact_name?.split(" ")[0] || "där";
+    const company = prospect.company || "ert bolag";
+    const title = prospect.contact_title || "beslutsfattare";
+    if (type === "linkedin") {
+      return `Hej ${name}!\n\nSåg att du är ${title} på ${company} — imponerande vad ni bygger.\n\nJag jobbar på We Know IT, ett techkonsultbolag med 26 specialister inom mjukvaruutveckling, arkitektur och digitala produkter. Vi hjälper bolag som ${company} att accelerera utvecklingstakten utan att kompromissa med kvaliteten.\n\nSkulle gärna höra om ni har några initiativ på gång där extern kompetens kan tillföra värde. Kan vi ta 15 minuter?\n\nMed vänlig hälsning,\nMarkus`;
+    }
+    return `Hej ${name},\n\nJag heter Markus och jobbar på We Know IT — ett techkonsultbolag med 26 specialister inom mjukvaruutveckling och digitala produkter.\n\nJag nådde ut till dig eftersom vi hjälper bolag inom er bransch att skala sina tekniska team, antingen genom att förstärka befintlig organisation eller ta projektansvar från idé till lansering.\n\nHar ${company} några initiativ framåt där extern techkompetens kan vara relevant? Gärna 15–20 minuter för att utbyta tankar.\n\nMed vänlig hälsning,\nMarkus Noaksson\nWe Know IT\nmarkus@weknowit.se`;
+  };
+
   const generate = async (prospect) => {
     setSelectedProspect(prospect);
     setMessage("");
@@ -1134,7 +1144,7 @@ function MessagePanel({ showToast }) {
     });
     setGenerating(false);
     if (error || data?.error) {
-      showToast(data?.error || "Kunde inte generera meddelande", "error");
+      setMessage(generateLocal(prospect, messageType));
       return;
     }
     setMessage(data.message || "");
@@ -1379,6 +1389,16 @@ function ProspectingView({ showToast }) {
     showToast("OpenCorporates gav inga träffar — visar exempelprospekt", "info");
   };
 
+  const generateLocalMsg = (prospect, type) => {
+    const name = prospect.contact_name?.split(" ")[0] || "där";
+    const company = prospect.company || "ert bolag";
+    const title = prospect.contact_title || "beslutsfattare";
+    if (type === "linkedin") {
+      return `Hej ${name}!\n\nSåg att du är ${title} på ${company} — imponerande vad ni bygger.\n\nJag jobbar på We Know IT, ett techkonsultbolag med 26 specialister. Vi hjälper bolag som ${company} att accelerera utan att kompromissa med kvaliteten.\n\nSkulle gärna höra om ni har initiativ på gång där extern kompetens kan tillföra värde. Kan vi ta 15 minuter?\n\nMed vänlig hälsning,\nMarkus`;
+    }
+    return `Hej ${name},\n\nJag heter Markus och jobbar på We Know IT — ett techkonsultbolag med 26 specialister inom mjukvaruutveckling och digitala produkter.\n\nJag nådde ut till dig eftersom vi hjälper bolag inom er bransch att skala sina tekniska team, antingen genom att förstärka befintlig organisation eller ta projektansvar från idé till lansering.\n\nHar ${company} några initiativ framåt där extern techkompetens kan vara relevant? Gärna 15–20 minuter för att utbyta tankar.\n\nMed vänlig hälsning,\nMarkus Noaksson\nWe Know IT`;
+  };
+
   const generateMessage = async (prospect) => {
     setSelectedProspect(prospect);
     setMessage("");
@@ -1388,7 +1408,7 @@ function ProspectingView({ showToast }) {
     });
     setGeneratingMsg(false);
     if (error || data?.error) {
-      showToast(data?.error || "Kunde inte generera meddelande", "error");
+      setMessage(generateLocalMsg(prospect, messageType));
       return;
     }
     setMessage(data.message || "");
