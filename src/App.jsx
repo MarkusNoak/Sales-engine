@@ -126,6 +126,23 @@ function exportCSV(data, filename) {
   URL.revokeObjectURL(url);
 }
 
+function guessEmails(contactName, domain) {
+  if (!contactName || !domain) return [];
+  const clean = (s) => s.toLowerCase()
+    .replace(/å/g,"a").replace(/ä/g,"a").replace(/ö/g,"o")
+    .replace(/é/g,"e").replace(/ü/g,"u").replace(/[^a-z]/g,"");
+  const parts = contactName.trim().split(/\s+/);
+  if (parts.length < 2) return [`${clean(parts[0])}@${domain}`];
+  const first = clean(parts[0]);
+  const last = clean(parts[parts.length - 1]);
+  return [
+    `${first}.${last}@${domain}`,
+    `${first}@${domain}`,
+    `${first[0]}.${last}@${domain}`,
+    `${first}${last}@${domain}`,
+  ];
+}
+
 // ─── UI COMPONENTS ──────────────────────────────────────────────────────────
 
 function Tag({ children, color, onClick, style = {} }) {
@@ -1825,47 +1842,82 @@ function ProspectingView({ showToast }) {
                 ⚠ Exempelprospekt (OpenCorporates gav inga träffar). Prova ett annat sökord eller lägg till APOLLO_API_KEY för bättre resultat.
               </div>
             )}
-            {results.map((p, i) => (
-              <div key={i} style={{
-                background: COLORS.card,
-                border: `1px solid ${selectedProspect?.company === p.company ? COLORS.accent + "66" : COLORS.border}`,
-                borderRadius: 10, padding: "14px 16px",
-              }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
-                      <span style={{ color: COLORS.text, fontWeight: 700, fontSize: 14 }}>{p.company}</span>
-                      {p.linkedin_url && (
-                        <a href={p.linkedin_url} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} style={{ color: COLORS.blue, fontSize: 11, textDecoration: "none" }}>LinkedIn ↗</a>
-                      )}
-                      {p.website && (
-                        <a href={p.website.startsWith("http") ? p.website : `https://${p.website}`} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} style={{ color: COLORS.muted, fontSize: 11, textDecoration: "none" }}>Webb ↗</a>
+            {results.map((p, i) => {
+              const domain = p.website ? p.website.replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0] : null;
+              const emailGuesses = (!p.contact_email && p.contact_name && domain) ? guessEmails(p.contact_name, domain) : [];
+              const [chosenEmail, setChosenEmail] = [p._chosenEmail, (e) => { p._chosenEmail = e; setResults(r => [...r]); }];
+              const displayEmail = p.contact_email || chosenEmail || null;
+              return (
+                <div key={i} style={{
+                  background: COLORS.card,
+                  border: `1px solid ${selectedProspect?.company === p.company ? COLORS.accent + "66" : COLORS.border}`,
+                  borderRadius: 10, padding: "14px 16px",
+                }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
+                        <span style={{ color: COLORS.text, fontWeight: 700, fontSize: 14 }}>{p.company}</span>
+                        {p.linkedin_url && (
+                          <a href={p.linkedin_url} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} style={{ color: COLORS.blue, fontSize: 11, textDecoration: "none" }}>LinkedIn ↗</a>
+                        )}
+                        {domain && (
+                          <a href={`https://${domain}`} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} style={{ color: COLORS.muted, fontSize: 11, textDecoration: "none" }}>Webb ↗</a>
+                        )}
+                      </div>
+                      <div style={{ color: COLORS.muted, fontSize: 11 }}>
+                        {p.city} · {p.employees ? `${p.employees} anst.` : "okänt antal"} · {p.industry}
+                      </div>
+                      {p.contact_name && (
+                        <div style={{ marginTop: 4, fontSize: 12, color: COLORS.mutedLight }}>
+                          {p.contact_name}{p.contact_title ? ` · ${p.contact_title}` : ""}
+                        </div>
                       )}
                     </div>
-                    <div style={{ color: COLORS.muted, fontSize: 11 }}>
-                      {p.city} · {p.employees ? `${p.employees} anst.` : "okänt antal"} · {p.industry}
+                    <div style={{ display: "flex", gap: 6, flexShrink: 0, marginLeft: 8 }}>
+                      <button onClick={() => generateMessage(p)} style={{
+                        padding: "5px 10px", borderRadius: 5, border: `1px solid ${COLORS.accent}44`,
+                        background: COLORS.accentDim, color: COLORS.accent, fontSize: 11, fontWeight: 600, cursor: "pointer"
+                      }}>✍️ Meddelande</button>
+                      <button onClick={() => addToProspects({ ...p, contact_email: displayEmail })} disabled={addingToDb === p.company} style={{
+                        padding: "5px 10px", borderRadius: 5, border: "none",
+                        background: addingToDb === p.company ? COLORS.border : COLORS.green + "22",
+                        color: addingToDb === p.company ? COLORS.muted : COLORS.green,
+                        fontSize: 11, fontWeight: 600, cursor: "pointer"
+                      }}>
+                        {addingToDb === p.company ? "..." : "+ Pipeline"}
+                      </button>
                     </div>
                   </div>
-                  <div style={{ display: "flex", gap: 6, flexShrink: 0, marginLeft: 8 }}>
-                    <button onClick={() => generateMessage(p)} style={{
-                      padding: "5px 10px", borderRadius: 5, border: `1px solid ${COLORS.accent}44`,
-                      background: COLORS.accentDim, color: COLORS.accent, fontSize: 11, fontWeight: 600, cursor: "pointer"
-                    }}>✍️ Meddelande</button>
-                    <button onClick={() => addToProspects(p)} disabled={addingToDb === p.company} style={{
-                      padding: "5px 10px", borderRadius: 5, border: "none",
-                      background: addingToDb === p.company ? COLORS.border : COLORS.green + "22",
-                      color: addingToDb === p.company ? COLORS.muted : COLORS.green,
-                      fontSize: 11, fontWeight: 600, cursor: "pointer"
-                    }}>
-                      {addingToDb === p.company ? "..." : "+ Pipeline"}
-                    </button>
+
+                  {/* Email: verified or pattern guesses */}
+                  {displayEmail ? (
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6 }}>
+                      <span style={{ fontSize: 11 }}>📧</span>
+                      <a href={`mailto:${displayEmail}`} style={{ color: COLORS.blue, fontSize: 12, textDecoration: "none" }}>{displayEmail}</a>
+                      {p.contact_email && <span style={{ color: COLORS.green, fontSize: 10 }}>✓ verifierad</span>}
+                      {!p.contact_email && <span style={{ color: COLORS.accent, fontSize: 10 }}>gissad</span>}
+                    </div>
+                  ) : emailGuesses.length > 0 ? (
+                    <div style={{ marginTop: 8, padding: "8px 10px", background: COLORS.surface, borderRadius: 6 }}>
+                      <div style={{ color: COLORS.muted, fontSize: 10, marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em" }}>Möjliga mailadresser — välj en:</div>
+                      <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+                        {emailGuesses.map(e => (
+                          <button key={e} onClick={() => setChosenEmail(e)} style={{
+                            padding: "3px 8px", borderRadius: 4, border: `1px solid ${COLORS.border}`,
+                            background: "none", color: COLORS.mutedLight, fontSize: 11, cursor: "pointer",
+                            fontFamily: "inherit",
+                          }}>{e}</button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  <div style={{ color: COLORS.muted, fontSize: 11, fontStyle: "italic", lineHeight: 1.4, marginTop: 6 }}>
+                    {p.why_good_fit}
                   </div>
                 </div>
-                <div style={{ color: COLORS.muted, fontSize: 11, fontStyle: "italic", lineHeight: 1.4 }}>
-                  {p.why_good_fit}
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
