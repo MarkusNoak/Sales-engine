@@ -224,7 +224,7 @@ function PipelineView({ showToast }) {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const { data, error } = await supabase.from("prospects").select("*").order("next_action_date", { ascending: true });
+    const { data, error } = await supabase.schema("sales").from("prospects").select("*").order("next_action_date", { ascending: true });
     if (error) { showToast("Kunde inte ladda prospects", "error"); }
     else setProspects(data || []);
     setLoading(false);
