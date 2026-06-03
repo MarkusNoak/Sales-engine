@@ -303,6 +303,277 @@ function ProspectModal({ isOpen, onClose, editItem, onSaved, showToast }) {
   );
 }
 
+// ─── ACTIVITY LOG HELPERS ────────────────────────────────────────────────────
+
+const ACTIVITY_TYPES = [
+  { id: "email", label: "Mail", icon: "📧" },
+  { id: "linkedin", label: "LinkedIn", icon: "💼" },
+  { id: "call", label: "Samtal", icon: "📞" },
+  { id: "meeting", label: "Möte", icon: "🤝" },
+  { id: "note", label: "Notering", icon: "📝" },
+];
+
+// ─── LEAD DETAIL MODAL ───────────────────────────────────────────────────────
+
+function LeadDetailModal({ isOpen, onClose, prospect, onSaved, showToast }) {
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState({});
+  const [saving, setSaving] = useState(false);
+  const [activities, setActivities] = useState([]);
+  const [loadingAct, setLoadingAct] = useState(false);
+  const [actType, setActType] = useState("email");
+  const [actDesc, setActDesc] = useState("");
+  const [actOwner, setActOwner] = useState("Markus");
+  const [addingAct, setAddingAct] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen) { setEditing(false); setActDesc(""); return; }
+    setForm(prospect ? { ...prospect, deal_value: prospect.deal_value || "" } : {});
+    if (prospect?.id) loadActivities(prospect.id);
+  }, [isOpen, prospect]);
+
+  const loadActivities = async (id) => {
+    setLoadingAct(true);
+    const { data } = await supabase.from("sales_activities").select("*").eq("prospect_id", id).order("created_at", { ascending: false });
+    setActivities(data || []);
+    setLoadingAct(false);
+  };
+
+  const save = async () => {
+    if (!form.company?.trim()) return;
+    setSaving(true);
+    const payload = { ...form, deal_value: parseInt(form.deal_value) || 0, next_action_date: form.next_action_date || null };
+    delete payload.id; delete payload.created_at; delete payload.updated_at;
+    const { error } = await supabase.from("sales_prospects").update(payload).eq("id", prospect.id);
+    setSaving(false);
+    if (error) { showToast("Kunde inte spara: " + error.message, "error"); return; }
+    showToast("Sparat ✓", "success");
+    setEditing(false);
+    onSaved();
+  };
+
+  const addActivity = async () => {
+    if (!actDesc.trim()) return;
+    setAddingAct(true);
+    const { error } = await supabase.from("sales_activities").insert({
+      prospect_id: prospect.id, type: actType, description: actDesc, owner: actOwner,
+    });
+    setAddingAct(false);
+    if (error) { showToast("Kunde inte logga aktivitet", "error"); return; }
+    setActDesc("");
+    loadActivities(prospect.id);
+    showToast("Aktivitet loggad ✓", "success");
+  };
+
+  const deleteActivity = async (id) => {
+    await supabase.from("sales_activities").delete().eq("id", id);
+    setActivities(prev => prev.filter(a => a.id !== id));
+  };
+
+  const quickStatus = async (newStatus) => {
+    await supabase.from("sales_prospects").update({ status: newStatus }).eq("id", prospect.id);
+    setForm(f => ({ ...f, status: newStatus }));
+    onSaved();
+    showToast(`Status → ${STATUS_CONFIG[newStatus].label} ✓`, "success");
+  };
+
+  useEffect(() => {
+    const handler = (e) => { if (e.key === "Escape") onClose(); };
+    if (isOpen) document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [isOpen, onClose]);
+
+  if (!isOpen || !prospect) return null;
+
+  const today = new Date().toISOString().split("T")[0];
+  const isOverdue = form.next_action_date && form.next_action_date < today && !["Won", "Lost"].includes(form.status);
+  const statusColor = STATUS_CONFIG[form.status]?.color || COLORS.muted;
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "#000000CC", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 12, width: "100%", maxWidth: 860, maxHeight: "92vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+
+        {/* Header */}
+        <div style={{ padding: "20px 24px", borderBottom: `1px solid ${COLORS.border}`, display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexShrink: 0 }}>
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+              <span style={{ color: COLORS.text, fontSize: 18, fontWeight: 700 }}>{form.company}</span>
+              <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 700, background: statusColor + "22", color: statusColor, border: `1px solid ${statusColor}33` }}>{STATUS_CONFIG[form.status]?.label}</span>
+              {isOverdue && <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 700, background: COLORS.red + "22", color: COLORS.red }}>⚠ Försenad</span>}
+            </div>
+            {form.contact_name && <div style={{ color: COLORS.muted, fontSize: 13 }}>{form.contact_name}{form.contact_title ? ` · ${form.contact_title}` : ""}</div>}
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <button onClick={() => setEditing(e => !e)} style={{ padding: "6px 14px", borderRadius: 6, border: `1px solid ${COLORS.border}`, background: editing ? COLORS.accent : "none", color: editing ? "#000" : COLORS.muted, fontSize: 12, cursor: "pointer", fontWeight: editing ? 700 : 400 }}>
+              {editing ? "Avbryt" : "✎ Redigera"}
+            </button>
+            <button onClick={onClose} style={{ background: "none", border: "none", color: COLORS.muted, cursor: "pointer", fontSize: 22, lineHeight: 1 }}>×</button>
+          </div>
+        </div>
+
+        {/* Body — two columns */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", flex: 1, overflow: "hidden" }}>
+
+          {/* LEFT: info */}
+          <div style={{ padding: 24, overflowY: "auto", borderRight: `1px solid ${COLORS.border}` }}>
+            {editing ? (
+              <>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
+                  <Input label="Bolag *" value={form.company || ""} onChange={v => setForm(f => ({ ...f, company: v }))} />
+                  <Input label="Kontaktperson" value={form.contact_name || ""} onChange={v => setForm(f => ({ ...f, contact_name: v }))} />
+                  <Input label="Titel" value={form.contact_title || ""} onChange={v => setForm(f => ({ ...f, contact_title: v }))} />
+                  <Input label="E-post" value={form.contact_email || ""} onChange={v => setForm(f => ({ ...f, contact_email: v }))} placeholder="namn@bolag.se" />
+                  <Input label="Telefon" value={form.contact_phone || ""} onChange={v => setForm(f => ({ ...f, contact_phone: v }))} placeholder="+46 70 000 00 00" />
+                  <Input label="Kanal" value={form.channel || "LinkedIn"} onChange={v => setForm(f => ({ ...f, channel: v }))} options={CHANNELS} />
+                  <Input label="Status" value={form.status || "New"} onChange={v => setForm(f => ({ ...f, status: v }))} options={STATUSES} />
+                  <Input label="Ägare" value={form.owner || "Markus"} onChange={v => setForm(f => ({ ...f, owner: v }))} options={OWNERS} />
+                  <Input label="Nästa aktivitet" value={form.next_action || ""} onChange={v => setForm(f => ({ ...f, next_action: v }))} />
+                  <Input label="Datum" value={form.next_action_date || ""} onChange={v => setForm(f => ({ ...f, next_action_date: v }))} type="date" />
+                  <Input label="Deal-värde (SEK)" value={form.deal_value || ""} onChange={v => setForm(f => ({ ...f, deal_value: v }))} type="number" />
+                  <Input label="Källa" value={form.source || ""} onChange={v => setForm(f => ({ ...f, source: v }))} />
+                </div>
+                <div style={{ marginBottom: 16 }}>
+                  <label style={{ display: "block", color: COLORS.muted, fontSize: 11, marginBottom: 5, letterSpacing: "0.08em", textTransform: "uppercase" }}>Anteckningar</label>
+                  <textarea value={form.notes || ""} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} style={{ width: "100%", background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: "8px 12px", color: COLORS.text, fontSize: 13, fontFamily: "inherit", outline: "none", resize: "vertical", minHeight: 60, boxSizing: "border-box" }} />
+                </div>
+                <button onClick={save} disabled={saving} style={{ width: "100%", padding: "10px", borderRadius: 6, border: "none", background: COLORS.accent, color: "#000", fontWeight: 700, fontSize: 13, cursor: "pointer", opacity: saving ? 0.7 : 1 }}>
+                  {saving ? "Sparar..." : "Spara ändringar"}
+                </button>
+              </>
+            ) : (
+              <>
+                {/* Contact info */}
+                <div style={{ marginBottom: 20 }}>
+                  <div style={{ color: COLORS.muted, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>Kontaktuppgifter</div>
+                  {form.contact_email && (
+                    <a href={`mailto:${form.contact_email}`} style={{ display: "flex", alignItems: "center", gap: 8, color: COLORS.blue, fontSize: 13, textDecoration: "none", marginBottom: 6 }}>
+                      <span>📧</span>{form.contact_email}
+                    </a>
+                  )}
+                  {form.contact_phone && (
+                    <a href={`tel:${form.contact_phone}`} style={{ display: "flex", alignItems: "center", gap: 8, color: COLORS.mutedLight, fontSize: 13, textDecoration: "none", marginBottom: 6 }}>
+                      <span>📞</span>{form.contact_phone}
+                    </a>
+                  )}
+                  {!form.contact_email && !form.contact_phone && <span style={{ color: COLORS.muted, fontSize: 13 }}>Inga kontaktuppgifter — klicka Redigera</span>}
+                </div>
+
+                {/* Pipeline info */}
+                <div style={{ marginBottom: 20 }}>
+                  <div style={{ color: COLORS.muted, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>Pipeline</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                    {[
+                      { label: "Kanal", value: form.channel },
+                      { label: "Ägare", value: form.owner },
+                      { label: "Deal-värde", value: form.deal_value ? `${(form.deal_value / 1000).toFixed(0)}K SEK` : "—" },
+                      { label: "Källa", value: form.source || "—" },
+                    ].map(r => (
+                      <div key={r.label} style={{ background: COLORS.surface, borderRadius: 6, padding: "8px 12px" }}>
+                        <div style={{ color: COLORS.muted, fontSize: 10, textTransform: "uppercase", marginBottom: 2 }}>{r.label}</div>
+                        <div style={{ color: COLORS.text, fontSize: 13, fontWeight: 600 }}>{r.value}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Next action */}
+                <div style={{ marginBottom: 20 }}>
+                  <div style={{ color: COLORS.muted, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>Nästa aktivitet</div>
+                  <div style={{ background: COLORS.surface, borderRadius: 6, padding: "10px 14px" }}>
+                    <div style={{ color: isOverdue ? COLORS.red : COLORS.text, fontSize: 13, fontWeight: 600 }}>{form.next_action || "Ej satt"}</div>
+                    {form.next_action_date && <div style={{ color: isOverdue ? COLORS.red : COLORS.muted, fontSize: 12, marginTop: 2 }}>{form.next_action_date}{isOverdue ? " — Försenad!" : ""}</div>}
+                  </div>
+                </div>
+
+                {/* Quick status */}
+                <div>
+                  <div style={{ color: COLORS.muted, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>Flytta till status</div>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {STATUSES.filter(s => s !== form.status).map(s => (
+                      <button key={s} onClick={() => quickStatus(s)} style={{ padding: "4px 10px", borderRadius: 4, border: `1px solid ${STATUS_CONFIG[s].color}33`, background: STATUS_CONFIG[s].color + "11", color: STATUS_CONFIG[s].color, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>
+                        → {STATUS_CONFIG[s].label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {form.notes && (
+                  <div style={{ marginTop: 20, background: COLORS.surface, borderRadius: 6, padding: "10px 14px" }}>
+                    <div style={{ color: COLORS.muted, fontSize: 11, textTransform: "uppercase", marginBottom: 4 }}>Anteckningar</div>
+                    <div style={{ color: COLORS.mutedLight, fontSize: 13, lineHeight: 1.5 }}>{form.notes}</div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
+          {/* RIGHT: activity log */}
+          <div style={{ padding: 24, overflowY: "auto", display: "flex", flexDirection: "column" }}>
+            <div style={{ color: COLORS.text, fontWeight: 700, fontSize: 14, marginBottom: 16 }}>📋 Aktivitetslogg</div>
+
+            {/* Add activity */}
+            <div style={{ background: COLORS.surface, borderRadius: 8, padding: 14, marginBottom: 20 }}>
+              <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
+                {ACTIVITY_TYPES.map(t => (
+                  <button key={t.id} onClick={() => setActType(t.id)} style={{
+                    padding: "4px 10px", borderRadius: 4, border: "none", cursor: "pointer", fontSize: 11, fontWeight: 600,
+                    background: actType === t.id ? COLORS.accent : COLORS.border,
+                    color: actType === t.id ? "#000" : COLORS.muted,
+                  }}>{t.icon} {t.label}</button>
+                ))}
+              </div>
+              <textarea
+                value={actDesc}
+                onChange={e => setActDesc(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter" && e.metaKey) addActivity(); }}
+                placeholder="Beskriv aktiviteten... (Cmd+Enter för att spara)"
+                style={{ width: "100%", background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: "8px 12px", color: COLORS.text, fontSize: 13, fontFamily: "inherit", outline: "none", resize: "none", height: 70, boxSizing: "border-box", marginBottom: 8 }}
+              />
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <select value={actOwner} onChange={e => setActOwner(e.target.value)} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 4, padding: "4px 8px", color: COLORS.muted, fontSize: 12, fontFamily: "inherit", outline: "none" }}>
+                  {OWNERS.map(o => <option key={o} value={o}>{o}</option>)}
+                </select>
+                <button onClick={addActivity} disabled={addingAct || !actDesc.trim()} style={{ padding: "6px 16px", borderRadius: 6, border: "none", background: COLORS.accent, color: "#000", fontWeight: 700, fontSize: 12, cursor: "pointer", opacity: (!actDesc.trim() || addingAct) ? 0.5 : 1 }}>
+                  {addingAct ? "Loggar..." : "Logga"}
+                </button>
+              </div>
+            </div>
+
+            {/* Timeline */}
+            {loadingAct ? <Spinner /> : activities.length === 0 ? (
+              <div style={{ textAlign: "center", color: COLORS.muted, fontSize: 13, padding: "20px 0" }}>Inga aktiviteter ännu</div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {activities.map(a => {
+                  const t = ACTIVITY_TYPES.find(x => x.id === a.type) || ACTIVITY_TYPES[4];
+                  const date = new Date(a.created_at);
+                  const dateStr = date.toLocaleDateString("sv-SE", { day: "numeric", month: "short" });
+                  const timeStr = date.toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" });
+                  return (
+                    <div key={a.id} style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                      <div style={{ width: 28, height: 28, borderRadius: "50%", background: COLORS.surface, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, flexShrink: 0 }}>{t.icon}</div>
+                      <div style={{ flex: 1, background: COLORS.surface, borderRadius: 8, padding: "10px 12px" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                          <span style={{ color: COLORS.mutedLight, fontSize: 11, fontWeight: 600 }}>{t.label} · {a.owner}</span>
+                          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                            <span style={{ color: COLORS.muted, fontSize: 11, fontFamily: "DM Mono, monospace" }}>{dateStr} {timeStr}</span>
+                            <button onClick={() => deleteActivity(a.id)} style={{ background: "none", border: "none", color: COLORS.muted, cursor: "pointer", fontSize: 14, lineHeight: 1, padding: 0 }}>×</button>
+                          </div>
+                        </div>
+                        <div style={{ color: COLORS.text, fontSize: 13, lineHeight: 1.5 }}>{a.description}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── PIPELINE VIEW ──────────────────────────────────────────────────────────
 
 function KanbanColumn({ status, prospects, today, onEdit, onStatusChange }) {
@@ -375,6 +646,8 @@ function PipelineView({ showToast }) {
   const [viewMode, setViewMode] = useState("table");
   const [showModal, setShowModal] = useState(false);
   const [editItem, setEditItem] = useState(null);
+  const [showDetailModal, setShowDetailModal] = useState(false);
+  const [detailProspect, setDetailProspect] = useState(null);
 
   const today = new Date().toISOString().split("T")[0];
 
@@ -392,7 +665,9 @@ function PipelineView({ showToast }) {
   useEffect(() => { load(); }, [load]);
 
   const filtered = prospects.filter(p => {
-    if (filter !== "All" && p.status !== filter) return false;
+    if (filter === "__overdue") {
+      if (!p.next_action_date || p.next_action_date >= today || ["Won", "Lost"].includes(p.status)) return false;
+    } else if (filter !== "All" && p.status !== filter) return false;
     if (ownerFilter !== "All" && p.owner !== ownerFilter) return false;
     if (search && !p.company.toLowerCase().includes(search.toLowerCase()) &&
       !(p.contact_name || "").toLowerCase().includes(search.toLowerCase())) return false;
@@ -402,7 +677,7 @@ function PipelineView({ showToast }) {
   const overdue = prospects.filter(p => p.next_action_date && p.next_action_date < today && !["Won", "Lost"].includes(p.status)).length;
   const totalPipeline = prospects.filter(p => !["Won", "Lost"].includes(p.status)).reduce((s, p) => s + (p.deal_value || 0), 0);
 
-  const openEdit = (p) => { setEditItem(p); setShowModal(true); };
+  const openEdit = (p) => { setDetailProspect(p); setShowDetailModal(true); };
   const openAdd = () => { setEditItem(null); setShowModal(true); };
 
   const quickStatusChange = async (id, newStatus) => {
@@ -437,6 +712,27 @@ function PipelineView({ showToast }) {
           </div>
         ))}
       </div>
+
+      {/* Overdue banner */}
+      {overdue > 0 && (
+        <div style={{ background: COLORS.red + "11", border: `1px solid ${COLORS.red}33`, borderRadius: 10, padding: "12px 18px", marginBottom: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <span style={{ color: COLORS.red, fontWeight: 700, fontSize: 13 }}>⚠ {overdue} försenade leads — kräver åtgärd</span>
+            <button onClick={() => setFilter(filter === "__overdue" ? "All" : "__overdue")} style={{ padding: "4px 12px", borderRadius: 5, border: `1px solid ${COLORS.red}44`, background: filter === "__overdue" ? COLORS.red + "33" : "none", color: COLORS.red, fontSize: 11, cursor: "pointer" }}>
+              {filter === "__overdue" ? "Visa alla" : "Filtrera försenade"}
+            </button>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {prospects.filter(p => p.next_action_date && p.next_action_date < today && !["Won", "Lost"].includes(p.status)).slice(0, 4).map(p => (
+              <div key={p.id} onClick={() => openEdit(p)} style={{ background: COLORS.card, border: `1px solid ${COLORS.red}33`, borderRadius: 7, padding: "8px 12px", cursor: "pointer", flex: "1 1 180px", minWidth: 160 }}>
+                <div style={{ color: COLORS.text, fontWeight: 600, fontSize: 13 }}>{p.company}</div>
+                <div style={{ color: COLORS.muted, fontSize: 11 }}>{p.contact_name}</div>
+                <div style={{ color: COLORS.red, fontSize: 11, marginTop: 4 }}>{p.next_action_date} — {p.next_action || "ingen åtgärd satt"}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Toolbar */}
       <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
@@ -599,6 +895,14 @@ function PipelineView({ showToast }) {
         onClose={() => setShowModal(false)}
         editItem={editItem}
         onSaved={load}
+        showToast={showToast}
+      />
+
+      <LeadDetailModal
+        isOpen={showDetailModal}
+        onClose={() => setShowDetailModal(false)}
+        prospect={detailProspect}
+        onSaved={() => { load(); if (detailProspect) setDetailProspect(prev => ({ ...prev })); }}
         showToast={showToast}
       />
     </div>
