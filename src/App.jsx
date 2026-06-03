@@ -1033,6 +1033,43 @@ function MessagePanel({ showToast }) {
   );
 }
 
+// ─── LOCAL PROSPECT GENERATOR ────────────────────────────────────────────────
+
+const SWEDISH_NAMES = ["Erik Lindqvist","Anna Bergström","Marcus Hansson","Sofia Johansson","Johan Nilsson","Emma Karlsson","Anders Persson","Maja Svensson","Mikael Holm","Lena Andersson","Oscar Björk","Sara Lindgren","Daniel Nyström","Frida Gustafsson","Adam Larsson"];
+const TITLES = ["VD","CTO","Head of Product","Co-founder","Head of Engineering","CPO","Grundare"];
+const DOMAINS = { SaaS: ["platform","hub","app","cloud","io"], "E-handel": ["shop","store","market","commerce","trade"], Fintech: ["pay","finance","capital","money","bank"], Proptech: ["prop","estate","home","realty","space"], Healthtech: ["health","care","med","clinic","vita"], Cleantech: ["green","eco","clean","sustain","earth"], "B2B-tjänster": ["solutions","services","group","partners","consulting"] };
+
+function generateLocalProspects(bransch, ort, storlek, query) {
+  const words = DOMAINS[bransch] || DOMAINS.SaaS;
+  const prefixes = ["Nord","Syd","Öst","Väst","Proto","Agile","Smart","Hyper","Meta","Stack","Scale","Swift","Logic","Core","Peak"];
+  const [minStr] = storlek.replace("–","-").split("-");
+  const minEmp = parseInt(minStr) || 10;
+
+  return Array.from({ length: 8 }, (_, i) => {
+    const prefix = prefixes[(i * 3) % prefixes.length];
+    const word = words[i % words.length];
+    const company = `${prefix}${word.charAt(0).toUpperCase() + word.slice(1)}`;
+    const name = SWEDISH_NAMES[(i * 2) % SWEDISH_NAMES.length];
+    const firstName = name.split(" ")[0].toLowerCase();
+    const domain = `${company.toLowerCase()}.se`;
+    const emp = minEmp + Math.floor(i * (minEmp * 0.8));
+    return {
+      company,
+      contact_name: name,
+      contact_title: TITLES[i % TITLES.length],
+      contact_email: `${firstName}@${domain}`,
+      contact_phone: `+46 7${i} ${Math.floor(Math.random()*900+100)} ${Math.floor(Math.random()*90+10)} ${Math.floor(Math.random()*90+10)}`,
+      city: ort === "Sverige" ? ["Stockholm","Göteborg","Malmö","Linköping"][i % 4] : ort,
+      employees: emp,
+      industry: bransch,
+      website: domain,
+      linkedin_url: null,
+      channel: i % 2 === 0 ? "LinkedIn" : "Mail",
+      why_good_fit: `${bransch}-bolag i ${ort} med ~${emp} anställda som sannolikt behöver en extern techpartner för att skala.`,
+    };
+  });
+}
+
 // ─── PROSPECTING VIEW ────────────────────────────────────────────────────────
 
 function ProspectingView({ showToast }) {
@@ -1042,6 +1079,8 @@ function ProspectingView({ showToast }) {
   const [storlek, setStorlek] = useState("10–50");
   const [results, setResults] = useState([]);
   const [searching, setSearching] = useState(false);
+  const [source, setSource] = useState("ai");
+  const [resultSource, setResultSource] = useState(null);
   const [selectedProspect, setSelectedProspect] = useState(null);
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState("mail");
@@ -1051,27 +1090,35 @@ function ProspectingView({ showToast }) {
   const searchProspects = async () => {
     setSearching(true);
     setResults([]);
+    setResultSource(null);
     setSelectedProspect(null);
     setMessage("");
 
-    const { data, error } = await supabase.functions.invoke("apollo-search", {
+    const fn = source === "apollo" ? "apollo-search" : "generate-prospects";
+    const { data, error } = await supabase.functions.invoke(fn, {
       body: { bransch, ort, storlek, query: searchQuery },
     });
 
     setSearching(false);
 
-    if (error) {
-      showToast("Fel: " + (error.message || JSON.stringify(error)), "error");
-      return;
-    }
-    if (data?.error) {
-      showToast(data.error, "error");
+    const errMsg = data?.error || error?.message || null;
+    if (errMsg) {
+      // If API key missing, fall back to local generation
+      if (errMsg.includes("saknas") || errMsg.includes("non-2xx")) {
+        const local = generateLocalProspects(bransch, ort, storlek, searchQuery);
+        setResultSource("local");
+        setResults(local);
+        showToast("API-nyckel saknas — visar lokalt genererade prospekt", "error");
+        return;
+      }
+      showToast("Fel: " + errMsg, "error");
       return;
     }
     const prospects = data?.prospects || [];
     if (prospects.length === 0) {
       showToast("Inga träffar — prova andra filter", "error");
     }
+    setResultSource(data?.source || source);
     setResults(prospects);
   };
 
@@ -1098,12 +1145,14 @@ function ProspectingView({ showToast }) {
       company: prospect.company,
       contact_name: prospect.contact_name || null,
       contact_title: prospect.contact_title || null,
+      contact_email: prospect.contact_email || null,
+      contact_phone: prospect.contact_phone || null,
       channel: prospect.channel || "LinkedIn",
       status: "New",
       next_action: "Skicka första kontakt",
       next_action_date: tomorrow.toISOString().split("T")[0],
       owner: "Markus",
-      source: "Apollo",
+      source: resultSource === "apollo" ? "Apollo" : "AI-prospektering",
     });
     setAddingToDb(null);
     if (error) { showToast("Kunde inte lägga till: " + error.message, "error"); return; }
@@ -1115,8 +1164,21 @@ function ProspectingView({ showToast }) {
       {/* LEFT — Search + Results */}
       <div>
         <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 24, marginBottom: 16 }}>
-          <h3 style={{ color: COLORS.text, margin: "0 0 4px", fontSize: 15, fontWeight: 700 }}>🔍 Hitta prospekt via Apollo</h3>
-          <div style={{ color: COLORS.muted, fontSize: 11, marginBottom: 16 }}>Riktiga bolag från Apollo.io — matchar ert ICP</div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+            <h3 style={{ color: COLORS.text, margin: 0, fontSize: 15, fontWeight: 700 }}>🔍 Hitta prospekt</h3>
+            <div style={{ display: "flex", border: `1px solid ${COLORS.border}`, borderRadius: 6, overflow: "hidden" }}>
+              {[["ai", "✨ AI"], ["apollo", "🔗 Apollo"]].map(([val, label]) => (
+                <button key={val} onClick={() => setSource(val)} style={{
+                  padding: "4px 12px", border: "none", cursor: "pointer", fontSize: 11, fontWeight: 600,
+                  background: source === val ? COLORS.accent : COLORS.surface,
+                  color: source === val ? "#000" : COLORS.muted,
+                }}>{label}</button>
+              ))}
+            </div>
+          </div>
+          <div style={{ color: COLORS.muted, fontSize: 11, marginBottom: 16 }}>
+            {source === "ai" ? "AI-genererade prospekt baserade på ICP — fungerar alltid" : "Riktiga bolag från Apollo.io — kräver aktiv API-nyckel"}
+          </div>
 
           <div style={{ marginBottom: 12 }}>
             <label style={{ display: "block", color: COLORS.muted, fontSize: 11, marginBottom: 5, letterSpacing: "0.08em", textTransform: "uppercase" }}>Fritext / nyckelord</label>
@@ -1159,7 +1221,7 @@ function ProspectingView({ showToast }) {
             fontWeight: 700, fontSize: 13, cursor: searching ? "not-allowed" : "pointer",
             fontFamily: "inherit", transition: "background 0.15s"
           }}>
-            {searching ? "Söker i Apollo..." : "Sök prospekt"}
+            {searching ? (source === "apollo" ? "Söker i Apollo..." : "Genererar med AI...") : "Sök prospekt"}
           </button>
         </div>
 
@@ -1172,6 +1234,11 @@ function ProspectingView({ showToast }) {
 
         {results.length > 0 && (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {resultSource === "local" && (
+              <div style={{ padding: "8px 12px", background: COLORS.accentDim, border: `1px solid ${COLORS.accent}33`, borderRadius: 8, fontSize: 11, color: COLORS.accent }}>
+                ⚠ Lokalt genererade exempelprospekt. Lägg till ANTHROPIC_API_KEY i Supabase Secrets för AI-generering, eller APOLLO_API_KEY för riktiga bolag.
+              </div>
+            )}
             {results.map((p, i) => (
               <div key={i} style={{
                 background: COLORS.card,
