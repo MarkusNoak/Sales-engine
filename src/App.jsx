@@ -1988,10 +1988,174 @@ function ProspectingView({ showToast }) {
   );
 }
 
+// ─── DASHBOARD ───────────────────────────────────────────────────────────────
+
+function DashboardView({ setView, showToast }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const today = new Date().toISOString().split("T")[0];
+
+  useEffect(() => {
+    const load = async () => {
+      const [{ data: prospects }, { data: accounts }, { data: activities }, { data: costs }] = await Promise.all([
+        supabase.from("sales_prospects").select("*"),
+        supabase.from("sales_accounts").select("current_mrr, type, status"),
+        supabase.from("sales_activities").select("id, type, description, owner, created_at, prospect_id").order("created_at", { ascending: false }).limit(6),
+        supabase.from("sales_costs").select("amount, frequency, active"),
+      ]);
+      setData({ prospects: prospects || [], accounts: accounts || [], activities: activities || [], costs: costs || [] });
+      setLoading(false);
+    };
+    load();
+  }, []);
+
+  if (loading) return <Spinner />;
+
+  const { prospects, accounts, activities, costs } = data;
+
+  const mrr = accounts.filter(a => (a.type || "recurring") === "recurring" && a.status === "Active").reduce((s, a) => s + (a.current_mrr || 0), 0);
+  const toMonthly = (c) => !c.active ? 0 : c.frequency === "yearly" ? Math.round(c.amount / 12) : c.frequency === "monthly" ? c.amount : 0;
+  const totalCosts = costs.reduce((s, c) => s + toMonthly(c), 0);
+  const margin = mrr - totalCosts;
+
+  const active = prospects.filter(p => !["Won", "Lost"].includes(p.status));
+  const overdue = active.filter(p => p.next_action_date && p.next_action_date < today);
+  const dueToday = active.filter(p => p.next_action_date === today);
+  const meetings = prospects.filter(p => p.status === "Meeting");
+  const pipelineValue = active.reduce((s, p) => s + (p.deal_value || 0), 0);
+
+  const funnelStages = ["New","Contacted","Reply","Meeting","Proposal"].map(s => ({
+    ...STATUS_CONFIG[s],
+    id: s,
+    count: prospects.filter(p => p.status === s).length,
+  }));
+  const maxCount = Math.max(...funnelStages.map(s => s.count), 1);
+
+  const activityIcons = { email: "📧", linkedin: "💼", call: "📞", meeting: "🤝", note: "📝" };
+
+  return (
+    <div>
+      {/* Header */}
+      <div style={{ marginBottom: 24 }}>
+        <h2 style={{ margin: "0 0 4px", fontSize: 20, fontWeight: 700, color: COLORS.text }}>
+          Godmorgon 👋
+        </h2>
+        <p style={{ margin: 0, color: COLORS.muted, fontSize: 13 }}>
+          {new Date().toLocaleDateString("sv-SE", { weekday: "long", day: "numeric", month: "long" })}
+          {overdue.length > 0 && <span style={{ color: COLORS.red, marginLeft: 12 }}>⚠ {overdue.length} försenade leads</span>}
+        </p>
+      </div>
+
+      {/* Top metrics */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12, marginBottom: 24 }}>
+        {[
+          { label: "MRR", value: `${(mrr/1000).toFixed(0)}K`, sub: "återkommande", color: COLORS.green },
+          { label: "Nettomarginal", value: `${(margin/1000).toFixed(0)}K`, sub: totalCosts > 0 ? `${mrr > 0 ? Math.round((margin/mrr)*100) : 0}% marginal` : "inga kostnader", color: margin >= 0 ? COLORS.green : COLORS.red },
+          { label: "Pipeline-värde", value: `${(pipelineValue/1000).toFixed(0)}K`, sub: `${active.length} aktiva leads`, color: COLORS.blue },
+          { label: "Möten bokade", value: meetings.length, sub: "i pipeline", color: COLORS.purple },
+          { label: "Försenade", value: overdue.length, sub: overdue.length > 0 ? "kräver åtgärd" : "allt är i tid ✓", color: overdue.length > 0 ? COLORS.red : COLORS.green },
+        ].map(s => (
+          <div key={s.label} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "14px 18px" }}>
+            <div style={{ color: COLORS.muted, fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 6 }}>{s.label}</div>
+            <div style={{ color: s.color, fontSize: 22, fontWeight: 700, fontFamily: "DM Mono, monospace", marginBottom: 2 }}>{s.value}</div>
+            <div style={{ color: COLORS.muted, fontSize: 11 }}>{s.sub}</div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16 }}>
+
+        {/* TODAY'S TASKS */}
+        <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 20 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+            <span style={{ color: COLORS.text, fontWeight: 700, fontSize: 14 }}>📅 Idag</span>
+            <button onClick={() => setView("pipeline")} style={{ background: "none", border: "none", color: COLORS.muted, fontSize: 11, cursor: "pointer" }}>Se pipeline →</button>
+          </div>
+          {dueToday.length === 0 && overdue.length === 0 ? (
+            <div style={{ color: COLORS.muted, fontSize: 13, textAlign: "center", padding: "20px 0" }}>Inga uppgifter idag 🎉</div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {[...overdue.slice(0, 2).map(p => ({ ...p, _late: true })), ...dueToday.slice(0, 3)].map(p => (
+                <div key={p.id} onClick={() => setView("pipeline")} style={{ padding: "10px 12px", background: COLORS.surface, borderRadius: 7, cursor: "pointer", borderLeft: `3px solid ${p._late ? COLORS.red : COLORS.accent}` }}>
+                  <div style={{ color: COLORS.text, fontSize: 13, fontWeight: 600 }}>{p.company}</div>
+                  <div style={{ color: p._late ? COLORS.red : COLORS.muted, fontSize: 11, marginTop: 2 }}>
+                    {p._late ? "⚠ Försenad · " : ""}{p.next_action || "Ingen åtgärd satt"}
+                  </div>
+                </div>
+              ))}
+              {(overdue.length + dueToday.length) > 5 && (
+                <div style={{ color: COLORS.muted, fontSize: 11, textAlign: "center" }}>+{overdue.length + dueToday.length - 5} till</div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* PIPELINE FUNNEL */}
+        <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 20 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+            <span style={{ color: COLORS.text, fontWeight: 700, fontSize: 14 }}>📡 Pipeline-tratt</span>
+            <button onClick={() => setView("pipeline")} style={{ background: "none", border: "none", color: COLORS.muted, fontSize: 11, cursor: "pointer" }}>Öppna →</button>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {funnelStages.map(s => (
+              <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ width: 64, color: COLORS.muted, fontSize: 11, textAlign: "right", flexShrink: 0 }}>{s.label}</div>
+                <div style={{ flex: 1, height: 20, background: COLORS.surface, borderRadius: 4, overflow: "hidden" }}>
+                  <div style={{ height: "100%", width: `${(s.count / maxCount) * 100}%`, background: s.color + "88", borderRadius: 4, transition: "width 0.6s ease", display: "flex", alignItems: "center", paddingLeft: 6 }}>
+                    {s.count > 0 && <span style={{ color: s.color, fontSize: 10, fontWeight: 700 }}>{s.count}</span>}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+          {pipelineValue > 0 && (
+            <div style={{ marginTop: 14, paddingTop: 12, borderTop: `1px solid ${COLORS.border}`, display: "flex", justifyContent: "space-between" }}>
+              <span style={{ color: COLORS.muted, fontSize: 12 }}>Totalt pipeline-värde</span>
+              <span style={{ color: COLORS.blue, fontSize: 13, fontWeight: 700, fontFamily: "DM Mono, monospace" }}>{(pipelineValue/1000).toFixed(0)}K SEK</span>
+            </div>
+          )}
+        </div>
+
+        {/* RECENT ACTIVITY */}
+        <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 20 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+            <span style={{ color: COLORS.text, fontWeight: 700, fontSize: 14 }}>⚡ Senaste aktivitet</span>
+          </div>
+          {activities.length === 0 ? (
+            <div style={{ color: COLORS.muted, fontSize: 13, textAlign: "center", padding: "20px 0" }}>
+              Inga aktiviteter loggade ännu<br />
+              <span style={{ fontSize: 11 }}>Klicka på ett lead i pipeline</span>
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {activities.map(a => {
+                const date = new Date(a.created_at);
+                const isToday = date.toISOString().split("T")[0] === today;
+                const dateStr = isToday
+                  ? date.toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" })
+                  : date.toLocaleDateString("sv-SE", { day: "numeric", month: "short" });
+                return (
+                  <div key={a.id} style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                    <span style={{ fontSize: 14, flexShrink: 0 }}>{activityIcons[a.type] || "📝"}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ color: COLORS.text, fontSize: 12, lineHeight: 1.4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.description}</div>
+                      <div style={{ color: COLORS.muted, fontSize: 10, marginTop: 1 }}>{a.owner} · {dateStr}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── APP SHELL ───────────────────────────────────────────────────────────────
 
 export default function App() {
-  const [view, setView] = useState("pipeline");
+  const [view, setView] = useState("dashboard");
   const [toast, setToast] = useState({ message: "", type: "success" });
 
   const showToast = (message, type = "success") => {
@@ -2000,6 +2164,7 @@ export default function App() {
   };
 
   const NAV = [
+    { id: "dashboard", label: "Dashboard", emoji: "🏠" },
     { id: "prospecting", label: "Hitta leads", emoji: "🔍" },
     { id: "pipeline", label: "Pipeline", emoji: "📡" },
     { id: "messages", label: "Meddelanden", emoji: "✍️" },
@@ -2047,6 +2212,7 @@ export default function App() {
       </div>
 
       <div style={{ padding: "24px 28px", maxWidth: 1300, margin: "0 auto" }}>
+        {view === "dashboard" && <DashboardView setView={setView} showToast={showToast} />}
         {view === "prospecting" && <ProspectingView showToast={showToast} />}
         {view === "pipeline" && <PipelineView showToast={showToast} />}
         {view === "messages" && <MessagePanel showToast={showToast} />}
