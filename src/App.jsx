@@ -236,9 +236,9 @@ function Input({ label, value, onChange, type = "text", options, placeholder }) 
 
 function ProspectModal({ isOpen, onClose, editItem, onSaved, showToast }) {
   const emptyForm = {
-    company: "", contact_name: "", contact_title: "", channel: "LinkedIn",
-    status: "New", next_action: "", next_action_date: "", owner: "Markus",
-    deal_value: "", source: "", notes: ""
+    company: "", contact_name: "", contact_title: "", contact_email: "",
+    contact_phone: "", channel: "LinkedIn", status: "New", next_action: "",
+    next_action_date: "", owner: "Markus", deal_value: "", source: "", notes: ""
   };
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
@@ -275,6 +275,8 @@ function ProspectModal({ isOpen, onClose, editItem, onSaved, showToast }) {
         <Input label="Bolag *" value={form.company} onChange={v => setForm(f => ({ ...f, company: v }))} />
         <Input label="Kontaktperson" value={form.contact_name} onChange={v => setForm(f => ({ ...f, contact_name: v }))} />
         <Input label="Titel" value={form.contact_title} onChange={v => setForm(f => ({ ...f, contact_title: v }))} />
+        <Input label="E-post" value={form.contact_email} onChange={v => setForm(f => ({ ...f, contact_email: v }))} placeholder="namn@bolag.se" />
+        <Input label="Telefon" value={form.contact_phone} onChange={v => setForm(f => ({ ...f, contact_phone: v }))} placeholder="+46 70 000 00 00" />
         <Input label="Kanal" value={form.channel} onChange={v => setForm(f => ({ ...f, channel: v }))} options={CHANNELS} />
         <Input label="Status" value={form.status} onChange={v => setForm(f => ({ ...f, status: v }))} options={STATUSES} />
         <Input label="Ägare" value={form.owner} onChange={v => setForm(f => ({ ...f, owner: v }))} options={OWNERS} />
@@ -328,7 +330,13 @@ function KanbanColumn({ status, prospects, today, onEdit, onStatusChange }) {
               onMouseLeave={e => e.currentTarget.style.borderColor = isOverdue ? COLORS.red + "44" : COLORS.border}
             >
               <div style={{ color: COLORS.text, fontWeight: 600, fontSize: 13, marginBottom: 3 }}>{p.company}</div>
-              {p.contact_name && <div style={{ color: COLORS.muted, fontSize: 11, marginBottom: 6 }}>{p.contact_name}</div>}
+              {p.contact_name && <div style={{ color: COLORS.muted, fontSize: 11, marginBottom: 2 }}>{p.contact_name}{p.contact_title ? ` · ${p.contact_title}` : ""}</div>}
+              {(p.contact_email || p.contact_phone) && (
+                <div style={{ marginBottom: 4 }}>
+                  {p.contact_email && <a href={`mailto:${p.contact_email}`} onClick={e => e.stopPropagation()} style={{ display: "block", color: COLORS.blue, fontSize: 10, textDecoration: "none" }}>{p.contact_email}</a>}
+                  {p.contact_phone && <span style={{ color: COLORS.mutedLight, fontSize: 10 }}>{p.contact_phone}</span>}
+                </div>
+              )}
               {p.deal_value > 0 && (
                 <div style={{ color: COLORS.accent, fontSize: 11, fontFamily: "DM Mono, monospace", marginBottom: 6 }}>
                   {(p.deal_value / 1000).toFixed(0)}K SEK
@@ -514,7 +522,7 @@ function PipelineView({ showToast }) {
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr style={{ borderBottom: `1px solid ${COLORS.border}` }}>
-                {["Bolag", "Kontakt", "Kanal", "Status", "Nästa aktivitet", "Datum", "Ägare", "Värde", ""].map(h => (
+                {["Bolag", "Kontakt", "Kontaktuppgifter", "Kanal", "Status", "Nästa aktivitet", "Datum", "Ägare", "Värde", ""].map(h => (
                   <th key={h} style={{ padding: "10px 14px", textAlign: "left", color: COLORS.muted, fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", fontWeight: 600, whiteSpace: "nowrap" }}>{h}</th>
                 ))}
               </tr>
@@ -534,6 +542,15 @@ function PipelineView({ showToast }) {
                     <td style={{ padding: "10px 14px" }}>
                       <div style={{ color: COLORS.mutedLight, fontSize: 12 }}>{p.contact_name}</div>
                       <div style={{ color: COLORS.muted, fontSize: 10 }}>{p.contact_title}</div>
+                    </td>
+                    <td style={{ padding: "10px 14px" }}>
+                      {p.contact_email && (
+                        <a href={`mailto:${p.contact_email}`} onClick={e => e.stopPropagation()} style={{ display: "block", color: COLORS.blue, fontSize: 11, textDecoration: "none" }}>{p.contact_email}</a>
+                      )}
+                      {p.contact_phone && (
+                        <a href={`tel:${p.contact_phone}`} onClick={e => e.stopPropagation()} style={{ display: "block", color: COLORS.mutedLight, fontSize: 11, textDecoration: "none", marginTop: 2 }}>{p.contact_phone}</a>
+                      )}
+                      {!p.contact_email && !p.contact_phone && <span style={{ color: COLORS.muted, fontSize: 11 }}>—</span>}
                     </td>
                     <td style={{ padding: "10px 14px" }}><Tag color={COLORS.blue}>{p.channel}</Tag></td>
                     <td style={{ padding: "10px 14px" }} onClick={e => e.stopPropagation()}>
