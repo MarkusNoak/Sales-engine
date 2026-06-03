@@ -1060,8 +1060,12 @@ function ProspectingView({ showToast }) {
 
     setSearching(false);
 
-    if (error || data?.error) {
-      showToast(data?.error || "Kunde inte söka prospekt", "error");
+    if (error) {
+      showToast("Fel: " + (error.message || JSON.stringify(error)), "error");
+      return;
+    }
+    if (data?.error) {
+      showToast(data.error, "error");
       return;
     }
     const prospects = data?.prospects || [];
