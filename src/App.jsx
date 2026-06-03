@@ -835,7 +835,7 @@ function PipelineView({ showToast }) {
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr style={{ borderBottom: `1px solid ${COLORS.border}` }}>
-                {["Bolag", "Kontakt", "Kontaktuppgifter", "Kanal", "Status", "Nästa aktivitet", "Datum", "Ägare", "Värde", ""].map(h => (
+                {["Bolag", "Kontakt", "Kontaktuppgifter", "Kanal", "Status", "Nästa aktivitet", "Datum", "Ägare", "Värde", "Logg", ""].map(h => (
                   <th key={h} style={{ padding: "10px 14px", textAlign: "left", color: COLORS.muted, fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", fontWeight: 600, whiteSpace: "nowrap" }}>{h}</th>
                 ))}
               </tr>
@@ -891,8 +891,13 @@ function PipelineView({ showToast }) {
                     <td style={{ padding: "10px 14px", color: COLORS.text, fontSize: 12, fontFamily: "DM Mono, monospace", whiteSpace: "nowrap" }}>
                       {p.deal_value ? `${(p.deal_value / 1000).toFixed(0)}K` : "—"}
                     </td>
-                    <td style={{ padding: "10px 14px" }}>
-                      <button onClick={e => { e.stopPropagation(); remove(p.id); }} style={{ background: "none", border: "none", color: COLORS.muted, cursor: "pointer", fontSize: 18, lineHeight: 1 }}>×</button>
+                    <td style={{ padding: "10px 14px" }} onClick={e => e.stopPropagation()}>
+                      <button onClick={() => openEdit(p)} style={{ padding: "3px 9px", borderRadius: 5, border: `1px solid ${COLORS.border}`, background: "none", color: COLORS.mutedLight, fontSize: 11, cursor: "pointer", whiteSpace: "nowrap" }}>
+                        📋 Logg
+                      </button>
+                    </td>
+                    <td style={{ padding: "10px 14px" }} onClick={e => e.stopPropagation()}>
+                      <button onClick={() => remove(p.id)} style={{ background: "none", border: "none", color: COLORS.muted, cursor: "pointer", fontSize: 18, lineHeight: 1 }}>×</button>
                     </td>
                   </tr>
                 );
@@ -1293,45 +1298,76 @@ function CostsView({ showToast }) {
 // ─── PULSE VIEW ──────────────────────────────────────────────────────────────
 
 function PulseView({ showToast }) {
-  const [pulse, setPulse] = useState(null);
+  const [auto, setAuto] = useState(null);
+  const [manual, setManual] = useState(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState({});
   const [saving, setSaving] = useState(false);
 
   const weekStart = getWeekStart();
+  const weekEnd = new Date(new Date(weekStart).getTime() + 7 * 86400000).toISOString();
 
   const load = useCallback(async () => {
     setLoading(true);
-    const { data } = await supabase.from("sales_weekly_pulse").select("*").eq("week_start", weekStart).eq("owner", "Team").maybeSingle();
-    setPulse(data || { new_prospects: 0, contacts_sent: 0, followups: 0, meetings_booked: 0, proposals_sent: 0 });
+    const [{ data: saved }, { data: newLeads }, { data: activities }] = await Promise.all([
+      supabase.from("sales_weekly_pulse").select("*").eq("week_start", weekStart).eq("owner", "Team").maybeSingle(),
+      supabase.from("sales_prospects").select("id, status, created_at").gte("created_at", weekStart).lt("created_at", weekEnd),
+      supabase.from("sales_activities").select("type, created_at").gte("created_at", weekStart).lt("created_at", weekEnd),
+    ]);
+
+    const acts = activities || [];
+    const computed = {
+      new_prospects: (newLeads || []).length,
+      contacts_sent: acts.filter(a => ["email", "linkedin"].includes(a.type)).length,
+      followups: acts.filter(a => a.type === "call").length,
+      meetings_booked: acts.filter(a => a.type === "meeting").length,
+      proposals_sent: (newLeads || []).filter(l => l.status === "Proposal").length,
+    };
+    setAuto(computed);
+    setManual(saved || null);
     setLoading(false);
-  }, [weekStart]);
+  }, [weekStart, weekEnd]);
 
   useEffect(() => { load(); }, [load]);
+
+  const pulse = manual || auto || {};
 
   const save = async () => {
     setSaving(true);
     const payload = { ...draft, week_start: weekStart, owner: "Team" };
-    const existing = pulse?.id;
     let error;
-    if (existing) {
-      ({ error } = await supabase.from("sales_weekly_pulse").update(payload).eq("id", existing));
+    if (manual?.id) {
+      ({ error } = await supabase.from("sales_weekly_pulse").update(payload).eq("id", manual.id));
     } else {
       ({ error } = await supabase.from("sales_weekly_pulse").insert(payload));
     }
     setSaving(false);
-    if (error) { showToast("Kunde inte spara puls: " + error.message, "error"); return; }
-    showToast("Veckopuls sparad ✓", "success");
+    if (error) { showToast("Kunde inte spara: " + error.message, "error"); return; }
+    showToast("Puls sparad ✓", "success");
     setEditing(false);
     load();
   };
 
+  const useAutoValues = async () => {
+    setSaving(true);
+    const payload = { ...auto, week_start: weekStart, owner: "Team" };
+    let error;
+    if (manual?.id) {
+      ({ error } = await supabase.from("sales_weekly_pulse").update(payload).eq("id", manual.id));
+    } else {
+      ({ error } = await supabase.from("sales_weekly_pulse").insert(payload));
+    }
+    setSaving(false);
+    if (!error) { showToast("Auto-värden sparade ✓", "success"); load(); }
+  };
+
   if (loading) return <Spinner />;
 
-  const totalScore = Object.keys(WEEKLY_TARGETS).reduce((score, key) => score + Math.min((pulse[key] || 0) / WEEKLY_TARGETS[key], 1), 0);
+  const totalScore = Object.keys(WEEKLY_TARGETS).reduce((s, k) => s + Math.min((pulse[k] || 0) / WEEKLY_TARGETS[k], 1), 0);
   const healthPct = Math.round((totalScore / Object.keys(WEEKLY_TARGETS).length) * 100);
   const healthColor = healthPct >= 80 ? COLORS.green : healthPct >= 50 ? COLORS.accent : COLORS.red;
+  const isAutoSameAsManual = auto && manual && Object.keys(WEEKLY_TARGETS).every(k => (auto[k] || 0) === (manual[k] || 0));
 
   return (
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
@@ -1347,14 +1383,53 @@ function PulseView({ showToast }) {
               <div style={{ color: COLORS.muted, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>hälsa</div>
             </div>
           </div>
-          {Object.keys(WEEKLY_TARGETS).map(key => (
-            <MetricBar key={key} label={METRIC_LABELS[key]} value={pulse[key] || 0} target={WEEKLY_TARGETS[key]} />
-          ))}
+
+          {/* Auto vs manual indicator */}
+          {auto && !isAutoSameAsManual && (
+            <div style={{ background: COLORS.accentDim, border: `1px solid ${COLORS.accent}33`, borderRadius: 7, padding: "10px 14px", marginBottom: 16, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <div style={{ color: COLORS.accent, fontSize: 12, fontWeight: 600 }}>⚡ Auto-beräknade värden tillgängliga</div>
+                <div style={{ color: COLORS.muted, fontSize: 11, marginTop: 2 }}>Baserat på leads + aktiviteter denna vecka</div>
+              </div>
+              <button onClick={useAutoValues} disabled={saving} style={{ padding: "5px 12px", borderRadius: 5, border: "none", background: COLORS.accent, color: "#000", fontSize: 11, fontWeight: 700, cursor: "pointer", flexShrink: 0 }}>
+                Använd
+              </button>
+            </div>
+          )}
+          {manual && isAutoSameAsManual && (
+            <div style={{ background: "#0d2b1a", border: `1px solid ${COLORS.green}33`, borderRadius: 7, padding: "8px 14px", marginBottom: 16 }}>
+              <span style={{ color: COLORS.green, fontSize: 11 }}>✓ Synkad med pipeline-data</span>
+            </div>
+          )}
+
+          {/* Metrics — show auto side by side if differs */}
+          {Object.keys(WEEKLY_TARGETS).map(key => {
+            const manualVal = manual?.[key] || 0;
+            const autoVal = auto?.[key] || 0;
+            const showBoth = auto && manual && manualVal !== autoVal;
+            return (
+              <div key={key} style={{ marginBottom: 16 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                  <span style={{ color: COLORS.mutedLight, fontSize: 12 }}>{METRIC_LABELS[key]}</span>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    {showBoth && <span style={{ color: COLORS.accent, fontSize: 11, fontFamily: "DM Mono, monospace" }}>auto: {autoVal}</span>}
+                    <span style={{ color: healthPct >= 60 ? COLORS.green : COLORS.accent, fontSize: 12, fontWeight: 700, fontFamily: "DM Mono, monospace" }}>
+                      {pulse[key] || 0} / {WEEKLY_TARGETS[key]}
+                    </span>
+                  </div>
+                </div>
+                <div style={{ height: 4, background: COLORS.border, borderRadius: 2 }}>
+                  <div style={{ height: "100%", width: `${Math.min(((pulse[key] || 0) / WEEKLY_TARGETS[key]) * 100, 100)}%`, background: ((pulse[key] || 0) / WEEKLY_TARGETS[key]) >= 1 ? COLORS.green : ((pulse[key] || 0) / WEEKLY_TARGETS[key]) >= 0.6 ? COLORS.accent : COLORS.red, borderRadius: 2, transition: "width 0.6s ease" }} />
+                </div>
+              </div>
+            );
+          })}
+
           <button onClick={() => { setDraft({ ...pulse }); setEditing(true); }} style={{
             marginTop: 8, padding: "8px 16px", borderRadius: 6, border: `1px solid ${COLORS.border}`,
             background: "none", color: COLORS.mutedLight, cursor: "pointer", fontSize: 12, width: "100%"
           }}>
-            Uppdatera veckosiffror
+            ✎ Justera manuellt
           </button>
         </div>
 
