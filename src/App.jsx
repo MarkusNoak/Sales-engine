@@ -613,32 +613,48 @@ function AccountsView({ showToast }) {
   const [showModal, setShowModal] = useState(false);
   const [editItem, setEditItem] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [tab, setTab] = useState("recurring");
 
-  const emptyForm = { company: "", contact_name: "", current_mrr: "", upsell_potential: "", last_contact: "", status: "Active", next_action: "", next_action_date: "", notes: "" };
+  const emptyForm = { company: "", contact_name: "", type: "recurring", current_mrr: "", project_value: "", upsell_potential: "", last_contact: "", status: "Active", next_action: "", next_action_date: "", notes: "" };
   const [form, setForm] = useState(emptyForm);
 
   const load = useCallback(async () => {
     setLoading(true);
     const { data, error } = await supabase.from("sales_accounts").select("*").order("status").order("company");
-    if (error) showToast("Kunde inte ladda kunder: " + error.message, "error");
+    if (error) showToast("Kunde inte ladda: " + error.message, "error");
     else setAccounts(data || []);
     setLoading(false);
   }, []);
 
   useEffect(() => { load(); }, [load]);
 
-  const totalMRR = accounts.reduce((s, a) => s + (a.current_mrr || 0), 0);
-  const totalUpsell = accounts.reduce((s, a) => s + (a.upsell_potential || 0), 0);
+  const recurring = accounts.filter(a => (a.type || "recurring") === "recurring");
+  const projects = accounts.filter(a => a.type === "project");
+  const shown = tab === "recurring" ? recurring : projects;
 
-  const openEdit = (a) => { setEditItem(a); setForm({ ...a, current_mrr: a.current_mrr || "", upsell_potential: a.upsell_potential || "" }); setShowModal(true); };
-  const openAdd = () => { setEditItem(null); setForm(emptyForm); setShowModal(true); };
+  const totalMRR = recurring.reduce((s, a) => s + (a.current_mrr || 0), 0);
+  const totalUpsell = recurring.reduce((s, a) => s + (a.upsell_potential || 0), 0);
+  const totalProjects = projects.reduce((s, a) => s + (a.project_value || 0), 0);
+
+  const openEdit = (a) => {
+    setEditItem(a);
+    setForm({ ...a, current_mrr: a.current_mrr || "", project_value: a.project_value || "", upsell_potential: a.upsell_potential || "" });
+    setShowModal(true);
+  };
+  const openAdd = () => { setEditItem(null); setForm({ ...emptyForm, type: tab }); setShowModal(true); };
 
   const save = async () => {
     if (!form.company.trim()) return;
     setSaving(true);
-    const payload = { ...form, current_mrr: parseInt(form.current_mrr) || 0, upsell_potential: parseInt(form.upsell_potential) || 0, last_contact: form.last_contact || null, next_action_date: form.next_action_date || null };
+    const payload = {
+      ...form,
+      current_mrr: parseInt(form.current_mrr) || 0,
+      project_value: parseInt(form.project_value) || 0,
+      upsell_potential: parseInt(form.upsell_potential) || 0,
+      last_contact: form.last_contact || null,
+      next_action_date: form.next_action_date || null,
+    };
     delete payload.id; delete payload.created_at; delete payload.updated_at;
-
     let error;
     if (editItem) {
       ({ error } = await supabase.from("sales_accounts").update(payload).eq("id", editItem.id));
@@ -647,7 +663,7 @@ function AccountsView({ showToast }) {
     }
     setSaving(false);
     if (error) { showToast("Kunde inte spara: " + error.message, "error"); return; }
-    showToast(editItem ? "Kund uppdaterad ✓" : "Kund tillagd ✓", "success");
+    showToast(editItem ? "Uppdaterad ✓" : "Tillagd ✓", "success");
     setShowModal(false);
     load();
   };
@@ -655,7 +671,7 @@ function AccountsView({ showToast }) {
   const remove = async (id) => {
     const { error } = await supabase.from("sales_accounts").delete().eq("id", id);
     if (error) { showToast("Kunde inte ta bort", "error"); return; }
-    showToast("Kund borttagen", "success");
+    showToast("Borttagen", "success");
     setAccounts(prev => prev.filter(a => a.id !== id));
   };
 
@@ -663,42 +679,50 @@ function AccountsView({ showToast }) {
 
   return (
     <div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 24 }}>
+      {/* Stats */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 20 }}>
         {[
-          { label: "Total MRR", value: `${(totalMRR / 1000).toFixed(0)}K SEK/mån`, color: COLORS.green },
-          { label: "Upsell-potential", value: `${(totalUpsell / 1000).toFixed(0)}K SEK/mån`, color: COLORS.accent },
-          { label: "Aktiva kunder", value: accounts.filter(a => a.status === "Active").length, color: COLORS.blue },
+          { label: "MRR (recurring)", value: `${(totalMRR / 1000).toFixed(0)}K/mån`, color: COLORS.green },
+          { label: "Upsell-potential", value: `${(totalUpsell / 1000).toFixed(0)}K/mån`, color: COLORS.accent },
+          { label: "Projektintäkter", value: `${(totalProjects / 1000).toFixed(0)}K`, color: COLORS.blue },
+          { label: "Aktiva kunder", value: recurring.filter(a => a.status === "Active").length, color: COLORS.purple },
         ].map(s => (
           <div key={s.label} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "14px 18px" }}>
             <div style={{ color: COLORS.muted, fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 6 }}>{s.label}</div>
-            <div style={{ color: s.color, fontSize: 22, fontWeight: 700, fontFamily: "DM Mono, monospace" }}>{s.value}</div>
+            <div style={{ color: s.color, fontSize: 20, fontWeight: 700, fontFamily: "DM Mono, monospace" }}>{s.value}</div>
           </div>
         ))}
       </div>
 
-      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 16, alignItems: "center" }}>
-        <div />
+      {/* Tabs + actions */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+        <div style={{ display: "flex", border: `1px solid ${COLORS.border}`, borderRadius: 8, overflow: "hidden" }}>
+          {[["recurring", `🔄 Återkommande (${recurring.length})`], ["project", `📦 Projekt (${projects.length})`]].map(([val, label]) => (
+            <button key={val} onClick={() => setTab(val)} style={{
+              padding: "6px 16px", border: "none", cursor: "pointer", fontSize: 12, fontWeight: 600,
+              background: tab === val ? COLORS.accent : COLORS.surface,
+              color: tab === val ? "#000" : COLORS.muted,
+            }}>{label}</button>
+          ))}
+        </div>
         <div style={{ display: "flex", gap: 8 }}>
-          <button onClick={() => exportCSV(accounts, "kunder.csv")} style={{ padding: "6px 14px", borderRadius: 6, border: `1px solid ${COLORS.border}`, background: "none", color: COLORS.muted, fontSize: 12, cursor: "pointer" }}>↓ CSV</button>
+          <button onClick={() => exportCSV(shown, `${tab}.csv`)} style={{ padding: "6px 14px", borderRadius: 6, border: `1px solid ${COLORS.border}`, background: "none", color: COLORS.muted, fontSize: 12, cursor: "pointer" }}>↓ CSV</button>
           <button onClick={openAdd} style={{ padding: "6px 16px", borderRadius: 6, border: "none", cursor: "pointer", background: COLORS.accent, color: "#000", fontSize: 12, fontWeight: 700 }}>
-            + Ny kund
+            + {tab === "recurring" ? "Ny kund" : "Nytt projekt"}
           </button>
         </div>
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        {accounts.map(a => (
+        {shown.map(a => (
           <div key={a.id} onClick={() => openEdit(a)} style={{
             background: COLORS.card, border: `1px solid ${a.status === "At Risk" ? COLORS.red + "44" : COLORS.border}`,
-            borderRadius: 10, padding: "16px 20px", cursor: "pointer", position: "relative"
+            borderRadius: 10, padding: "16px 20px", cursor: "pointer", position: "relative",
           }}
             onMouseEnter={e => e.currentTarget.style.borderColor = COLORS.accent + "66"}
             onMouseLeave={e => e.currentTarget.style.borderColor = a.status === "At Risk" ? COLORS.red + "44" : COLORS.border}
           >
-            <button onClick={e => { e.stopPropagation(); remove(a.id); }} style={{
-              position: "absolute", top: 12, right: 12, background: "none", border: "none",
-              color: COLORS.muted, cursor: "pointer", fontSize: 18, lineHeight: 1
-            }}>×</button>
+            <button onClick={e => { e.stopPropagation(); remove(a.id); }} style={{ position: "absolute", top: 12, right: 12, background: "none", border: "none", color: COLORS.muted, cursor: "pointer", fontSize: 18 }}>×</button>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
               <div>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
@@ -710,37 +734,48 @@ function AccountsView({ showToast }) {
                 <div style={{ color: COLORS.muted, fontSize: 12 }}>{a.contact_name}</div>
               </div>
               <div style={{ textAlign: "right" }}>
-                <div style={{ color: COLORS.green, fontSize: 16, fontWeight: 700, fontFamily: "DM Mono, monospace" }}>
-                  {(a.current_mrr / 1000).toFixed(0)}K/mån
-                </div>
-                <div style={{ color: COLORS.muted, fontSize: 11 }}>+{(a.upsell_potential / 1000).toFixed(0)}K potential</div>
+                {tab === "recurring" ? (
+                  <>
+                    <div style={{ color: COLORS.green, fontSize: 16, fontWeight: 700, fontFamily: "DM Mono, monospace" }}>{((a.current_mrr || 0) / 1000).toFixed(0)}K/mån</div>
+                    <div style={{ color: COLORS.muted, fontSize: 11 }}>+{((a.upsell_potential || 0) / 1000).toFixed(0)}K potential</div>
+                  </>
+                ) : (
+                  <div style={{ color: COLORS.blue, fontSize: 16, fontWeight: 700, fontFamily: "DM Mono, monospace" }}>{((a.project_value || 0) / 1000).toFixed(0)}K</div>
+                )}
               </div>
             </div>
             {a.next_action && (
-              <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${COLORS.border}`, display: "flex", justifyContent: "space-between" }}>
+              <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${COLORS.border}`, display: "flex", justifyContent: "space-between" }}>
                 <span style={{ color: COLORS.mutedLight, fontSize: 12 }}>→ {a.next_action}</span>
                 <span style={{ color: COLORS.muted, fontSize: 11, fontFamily: "DM Mono, monospace" }}>{a.next_action_date || ""}</span>
               </div>
             )}
-            {a.notes && (
-              <div style={{ marginTop: 8, color: COLORS.muted, fontSize: 11, fontStyle: "italic" }}>{a.notes}</div>
-            )}
+            {a.notes && <div style={{ marginTop: 6, color: COLORS.muted, fontSize: 11, fontStyle: "italic" }}>{a.notes}</div>}
           </div>
         ))}
-        {accounts.length === 0 && (
-          <div style={{ padding: 40, textAlign: "center", color: COLORS.muted, fontSize: 13 }}>Inga kunder ännu</div>
+        {shown.length === 0 && (
+          <div style={{ padding: 40, textAlign: "center", color: COLORS.muted, fontSize: 13 }}>
+            {tab === "recurring" ? "Inga återkommande kunder ännu" : "Inga projekt ännu"}
+          </div>
         )}
       </div>
 
       <Modal isOpen={showModal} onClose={() => setShowModal(false)}>
         <h3 style={{ color: COLORS.text, margin: "0 0 20px", fontSize: 16, fontWeight: 700 }}>
-          {editItem ? "Redigera kund" : "Ny kund"}
+          {editItem ? "Redigera" : (form.type === "project" ? "Nytt projekt" : "Ny kund")}
         </h3>
+        <Input label="Typ" value={form.type} onChange={v => setForm(f => ({ ...f, type: v }))} options={["recurring", "project"]} />
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
           <Input label="Bolag *" value={form.company} onChange={v => setForm(f => ({ ...f, company: v }))} />
           <Input label="Kontaktperson" value={form.contact_name} onChange={v => setForm(f => ({ ...f, contact_name: v }))} />
-          <Input label="MRR (SEK/mån)" value={form.current_mrr} onChange={v => setForm(f => ({ ...f, current_mrr: v }))} type="number" />
-          <Input label="Upsell-potential (SEK/mån)" value={form.upsell_potential} onChange={v => setForm(f => ({ ...f, upsell_potential: v }))} type="number" />
+          {form.type === "recurring" ? (
+            <>
+              <Input label="MRR (SEK/mån)" value={form.current_mrr} onChange={v => setForm(f => ({ ...f, current_mrr: v }))} type="number" />
+              <Input label="Upsell-potential (SEK/mån)" value={form.upsell_potential} onChange={v => setForm(f => ({ ...f, upsell_potential: v }))} type="number" />
+            </>
+          ) : (
+            <Input label="Projektvärde (SEK)" value={form.project_value} onChange={v => setForm(f => ({ ...f, project_value: v }))} type="number" />
+          )}
           <Input label="Status" value={form.status} onChange={v => setForm(f => ({ ...f, status: v }))} options={["Active", "At Risk", "Churned"]} />
           <Input label="Senaste kontakt" value={form.last_contact} onChange={v => setForm(f => ({ ...f, last_contact: v }))} type="date" />
           <Input label="Nästa aktivitet" value={form.next_action} onChange={v => setForm(f => ({ ...f, next_action: v }))} />
@@ -748,13 +783,178 @@ function AccountsView({ showToast }) {
         </div>
         <div style={{ marginBottom: 16 }}>
           <label style={{ display: "block", color: COLORS.muted, fontSize: 11, marginBottom: 5, letterSpacing: "0.08em", textTransform: "uppercase" }}>Anteckningar</label>
-          <textarea value={form.notes || ""} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} style={{
-            width: "100%", background: COLORS.surface, border: `1px solid ${COLORS.border}`,
-            borderRadius: 6, padding: "8px 12px", color: COLORS.text, fontSize: 13,
-            fontFamily: "inherit", outline: "none", resize: "vertical", minHeight: 60, boxSizing: "border-box"
-          }} />
+          <textarea value={form.notes || ""} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} style={{ width: "100%", background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: "8px 12px", color: COLORS.text, fontSize: 13, fontFamily: "inherit", outline: "none", resize: "vertical", minHeight: 60, boxSizing: "border-box" }} />
         </div>
         <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+          <button onClick={() => setShowModal(false)} style={{ padding: "8px 18px", borderRadius: 6, border: `1px solid ${COLORS.border}`, background: "none", color: COLORS.muted, cursor: "pointer", fontSize: 13 }}>Avbryt</button>
+          <button onClick={save} disabled={saving} style={{ padding: "8px 20px", borderRadius: 6, border: "none", background: COLORS.accent, color: "#000", fontWeight: 700, cursor: "pointer", fontSize: 13, opacity: saving ? 0.7 : 1 }}>
+            {saving ? "Sparar..." : "Spara"}
+          </button>
+        </div>
+      </Modal>
+    </div>
+  );
+}
+
+// ─── COSTS VIEW ──────────────────────────────────────────────────────────────
+
+const COST_CATEGORIES = ["Personal", "Kontor & lokal", "Mjukvara & verktyg", "Marknadsföring", "Resor", "Konsulter", "Övrigt"];
+const FREQ_LABEL = { monthly: "/mån", yearly: "/år", "one-time": "engång" };
+
+function CostsView({ showToast }) {
+  const [costs, setCosts] = useState([]);
+  const [accounts, setAccounts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showModal, setShowModal] = useState(false);
+  const [editItem, setEditItem] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  const emptyForm = { category: "Personal", description: "", amount: "", frequency: "monthly", active: true, notes: "" };
+  const [form, setForm] = useState(emptyForm);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const [{ data: c }, { data: a }] = await Promise.all([
+      supabase.from("sales_costs").select("*").order("category").order("description"),
+      supabase.from("sales_accounts").select("current_mrr,type"),
+    ]);
+    setCosts(c || []);
+    setAccounts(a || []);
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const toMonthly = (c) => {
+    if (!c.active) return 0;
+    if (c.frequency === "monthly") return c.amount;
+    if (c.frequency === "yearly") return Math.round(c.amount / 12);
+    return 0;
+  };
+
+  const totalCostMonthly = costs.reduce((s, c) => s + toMonthly(c), 0);
+  const totalMRR = accounts.filter(a => (a.type || "recurring") === "recurring").reduce((s, a) => s + (a.current_mrr || 0), 0);
+  const margin = totalMRR - totalCostMonthly;
+  const marginPct = totalMRR > 0 ? Math.round((margin / totalMRR) * 100) : 0;
+
+  const byCategory = COST_CATEGORIES.map(cat => ({
+    cat,
+    items: costs.filter(c => c.category === cat),
+    total: costs.filter(c => c.category === cat).reduce((s, c) => s + toMonthly(c), 0),
+  })).filter(g => g.items.length > 0);
+
+  const openEdit = (c) => { setEditItem(c); setForm({ ...c, amount: c.amount || "" }); setShowModal(true); };
+  const openAdd = () => { setEditItem(null); setForm(emptyForm); setShowModal(true); };
+
+  const save = async () => {
+    if (!form.description.trim()) return;
+    setSaving(true);
+    const payload = { ...form, amount: parseInt(form.amount) || 0 };
+    delete payload.id; delete payload.created_at;
+    let error;
+    if (editItem) {
+      ({ error } = await supabase.from("sales_costs").update(payload).eq("id", editItem.id));
+    } else {
+      ({ error } = await supabase.from("sales_costs").insert(payload));
+    }
+    setSaving(false);
+    if (error) { showToast("Kunde inte spara: " + error.message, "error"); return; }
+    showToast(editItem ? "Kostnad uppdaterad ✓" : "Kostnad tillagd ✓", "success");
+    setShowModal(false);
+    load();
+  };
+
+  const remove = async (id) => {
+    await supabase.from("sales_costs").delete().eq("id", id);
+    showToast("Borttagen", "success");
+    setCosts(prev => prev.filter(c => c.id !== id));
+  };
+
+  const toggleActive = async (c) => {
+    await supabase.from("sales_costs").update({ active: !c.active }).eq("id", c.id);
+    setCosts(prev => prev.map(x => x.id === c.id ? { ...x, active: !x.active } : x));
+  };
+
+  if (loading) return <Spinner />;
+
+  return (
+    <div>
+      {/* Summary stats */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 20 }}>
+        {[
+          { label: "MRR (intäkt)", value: `${(totalMRR / 1000).toFixed(0)}K/mån`, color: COLORS.green },
+          { label: "Kostnader/mån", value: `${(totalCostMonthly / 1000).toFixed(0)}K/mån`, color: COLORS.red },
+          { label: "Nettomarginal", value: `${(margin / 1000).toFixed(0)}K/mån`, color: margin >= 0 ? COLORS.green : COLORS.red },
+          { label: "Marginalprocent", value: `${marginPct}%`, color: marginPct >= 30 ? COLORS.green : marginPct >= 0 ? COLORS.accent : COLORS.red },
+        ].map(s => (
+          <div key={s.label} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "14px 18px" }}>
+            <div style={{ color: COLORS.muted, fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 6 }}>{s.label}</div>
+            <div style={{ color: s.color, fontSize: 20, fontWeight: 700, fontFamily: "DM Mono, monospace" }}>{s.value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Cost bar */}
+      {totalMRR > 0 && (
+        <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "16px 20px", marginBottom: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+            <span style={{ color: COLORS.mutedLight, fontSize: 12 }}>Kostnader vs MRR</span>
+            <span style={{ color: COLORS.muted, fontSize: 12, fontFamily: "DM Mono, monospace" }}>{Math.min(Math.round((totalCostMonthly / totalMRR) * 100), 100)}% av intäkter</span>
+          </div>
+          <div style={{ height: 8, background: COLORS.border, borderRadius: 4, overflow: "hidden" }}>
+            <div style={{ height: "100%", width: `${Math.min((totalCostMonthly / totalMRR) * 100, 100)}%`, background: totalCostMonthly > totalMRR ? COLORS.red : COLORS.accent, borderRadius: 4, transition: "width 0.6s ease" }} />
+          </div>
+        </div>
+      )}
+
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16, gap: 8 }}>
+        <button onClick={() => exportCSV(costs, "kostnader.csv")} style={{ padding: "6px 14px", borderRadius: 6, border: `1px solid ${COLORS.border}`, background: "none", color: COLORS.muted, fontSize: 12, cursor: "pointer" }}>↓ CSV</button>
+        <button onClick={openAdd} style={{ padding: "6px 16px", borderRadius: 6, border: "none", cursor: "pointer", background: COLORS.accent, color: "#000", fontSize: 12, fontWeight: 700 }}>+ Ny kostnad</button>
+      </div>
+
+      {/* Grouped by category */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        {byCategory.map(({ cat, items, total }) => (
+          <div key={cat} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, overflow: "hidden" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", borderBottom: `1px solid ${COLORS.border}` }}>
+              <span style={{ color: COLORS.text, fontWeight: 700, fontSize: 13 }}>{cat}</span>
+              <span style={{ color: COLORS.accent, fontSize: 12, fontWeight: 700, fontFamily: "DM Mono, monospace" }}>{(total / 1000).toFixed(0)}K/mån</span>
+            </div>
+            {items.map(c => (
+              <div key={c.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 16px", borderBottom: `1px solid ${COLORS.border}22`, opacity: c.active ? 1 : 0.4 }}>
+                <div style={{ flex: 1 }}>
+                  <span style={{ color: COLORS.text, fontSize: 13 }}>{c.description}</span>
+                  {c.notes && <span style={{ color: COLORS.muted, fontSize: 11, marginLeft: 8 }}>{c.notes}</span>}
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  <span style={{ color: COLORS.mutedLight, fontSize: 12, fontFamily: "DM Mono, monospace" }}>
+                    {(c.amount / 1000).toFixed(0)}K{FREQ_LABEL[c.frequency]}
+                  </span>
+                  <button onClick={() => toggleActive(c)} style={{ background: "none", border: `1px solid ${COLORS.border}`, borderRadius: 4, color: c.active ? COLORS.green : COLORS.muted, fontSize: 10, padding: "2px 6px", cursor: "pointer" }}>
+                    {c.active ? "aktiv" : "pausad"}
+                  </button>
+                  <button onClick={() => openEdit(c)} style={{ background: "none", border: "none", color: COLORS.muted, cursor: "pointer", fontSize: 12 }}>✎</button>
+                  <button onClick={() => remove(c.id)} style={{ background: "none", border: "none", color: COLORS.muted, cursor: "pointer", fontSize: 16 }}>×</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ))}
+        {costs.length === 0 && (
+          <div style={{ padding: 40, textAlign: "center", color: COLORS.muted, fontSize: 13 }}>Inga kostnader inlagda ännu</div>
+        )}
+      </div>
+
+      <Modal isOpen={showModal} onClose={() => setShowModal(false)}>
+        <h3 style={{ color: COLORS.text, margin: "0 0 20px", fontSize: 16, fontWeight: 700 }}>{editItem ? "Redigera kostnad" : "Ny kostnad"}</h3>
+        <Input label="Kategori" value={form.category} onChange={v => setForm(f => ({ ...f, category: v }))} options={COST_CATEGORIES} />
+        <Input label="Beskrivning *" value={form.description} onChange={v => setForm(f => ({ ...f, description: v }))} placeholder="t.ex. GitHub Teams, Kontorshyra..." />
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
+          <Input label="Belopp (SEK)" value={form.amount} onChange={v => setForm(f => ({ ...f, amount: v }))} type="number" />
+          <Input label="Frekvens" value={form.frequency} onChange={v => setForm(f => ({ ...f, frequency: v }))} options={["monthly", "yearly", "one-time"]} />
+        </div>
+        <Input label="Anteckningar" value={form.notes || ""} onChange={v => setForm(f => ({ ...f, notes: v }))} placeholder="Valfritt..." />
+        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 4 }}>
           <button onClick={() => setShowModal(false)} style={{ padding: "8px 18px", borderRadius: 6, border: `1px solid ${COLORS.border}`, background: "none", color: COLORS.muted, cursor: "pointer", fontSize: 13 }}>Avbryt</button>
           <button onClick={save} disabled={saving} style={{ padding: "8px 20px", borderRadius: 6, border: "none", background: COLORS.accent, color: "#000", fontWeight: 700, cursor: "pointer", fontSize: 13, opacity: saving ? 0.7 : 1 }}>
             {saving ? "Sparar..." : "Spara"}
@@ -1101,17 +1301,11 @@ function ProspectingView({ showToast }) {
 
     setSearching(false);
 
-    const errMsg = data?.error || error?.message || null;
-    if (errMsg) {
-      // If API key missing, fall back to local generation
-      if (errMsg.includes("saknas") || errMsg.includes("non-2xx")) {
-        const local = generateLocalProspects(bransch, ort, storlek, searchQuery);
-        setResultSource("local");
-        setResults(local);
-        showToast("API-nyckel saknas — visar lokalt genererade prospekt", "error");
-        return;
-      }
-      showToast("Fel: " + errMsg, "error");
+    if (error || data?.error) {
+      const local = generateLocalProspects(bransch, ort, storlek, searchQuery);
+      setResultSource("local");
+      setResults(local);
+      showToast("Edge function otillgänglig — visar lokalt genererade prospekt", "info");
       return;
     }
     const prospects = data?.prospects || [];
@@ -1367,6 +1561,7 @@ export default function App() {
     { id: "messages", label: "Meddelanden", emoji: "✍️" },
     { id: "accounts", label: "Kunder", emoji: "🤝" },
     { id: "pulse", label: "Pulse", emoji: "📊" },
+    { id: "costs", label: "Kostnader", emoji: "💸" },
   ];
 
   return (
@@ -1413,6 +1608,7 @@ export default function App() {
         {view === "messages" && <MessagePanel showToast={showToast} />}
         {view === "accounts" && <AccountsView showToast={showToast} />}
         {view === "pulse" && <PulseView showToast={showToast} />}
+        {view === "costs" && <CostsView showToast={showToast} />}
       </div>
 
       <Toast message={toast.message} type={toast.type} />
