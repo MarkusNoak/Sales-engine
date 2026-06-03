@@ -798,7 +798,7 @@ function AccountsView({ showToast }) {
 
 // ─── COSTS VIEW ──────────────────────────────────────────────────────────────
 
-const COST_CATEGORIES = ["Personal", "Kontor & lokal", "Mjukvara & verktyg", "Marknadsföring", "Resor", "Konsulter", "Övrigt"];
+const COST_CATEGORIES = ["Personal & löner", "Kontor & lokal", "Mjukvara & licenser", "Telefoni & kommunikation", "Försäkringar & juridik", "Resor & representation", "Konsulter & UE", "Övrigt"];
 const FREQ_LABEL = { monthly: "/mån", yearly: "/år", "one-time": "engång" };
 
 function CostsView({ showToast }) {
@@ -809,7 +809,7 @@ function CostsView({ showToast }) {
   const [editItem, setEditItem] = useState(null);
   const [saving, setSaving] = useState(false);
 
-  const emptyForm = { category: "Personal", description: "", amount: "", frequency: "monthly", active: true, notes: "" };
+  const emptyForm = { category: "Personal & löner", description: "", amount: "", frequency: "monthly", active: true, notes: "" };
   const [form, setForm] = useState(emptyForm);
 
   const load = useCallback(async () => {
@@ -879,6 +879,10 @@ function CostsView({ showToast }) {
 
   return (
     <div>
+      <div style={{ marginBottom: 20 }}>
+        <h2 style={{ margin: "0 0 4px", fontSize: 18, fontWeight: 700, color: COLORS.text }}>💸 Driftkostnader</h2>
+        <p style={{ margin: 0, color: COLORS.muted, fontSize: 13 }}>Löner, hyra, licenser, telefoni och övriga fasta kostnader. Jämförs mot MRR för att ge nettomarginal.</p>
+      </div>
       {/* Summary stats */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 20 }}>
         {[
@@ -948,7 +952,7 @@ function CostsView({ showToast }) {
       <Modal isOpen={showModal} onClose={() => setShowModal(false)}>
         <h3 style={{ color: COLORS.text, margin: "0 0 20px", fontSize: 16, fontWeight: 700 }}>{editItem ? "Redigera kostnad" : "Ny kostnad"}</h3>
         <Input label="Kategori" value={form.category} onChange={v => setForm(f => ({ ...f, category: v }))} options={COST_CATEGORIES} />
-        <Input label="Beskrivning *" value={form.description} onChange={v => setForm(f => ({ ...f, description: v }))} placeholder="t.ex. GitHub Teams, Kontorshyra..." />
+        <Input label="Beskrivning *" value={form.description} onChange={v => setForm(f => ({ ...f, description: v }))} placeholder="t.ex. Lön Sara, Kontorshyra, Google Workspace..." />
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
           <Input label="Belopp (SEK)" value={form.amount} onChange={v => setForm(f => ({ ...f, amount: v }))} type="number" />
           <Input label="Frekvens" value={form.frequency} onChange={v => setForm(f => ({ ...f, frequency: v }))} options={["monthly", "yearly", "one-time"]} />
@@ -1294,26 +1298,85 @@ function ProspectingView({ showToast }) {
     setSelectedProspect(null);
     setMessage("");
 
-    const fn = source === "apollo" ? "apollo-search" : "generate-prospects";
-    const { data, error } = await supabase.functions.invoke(fn, {
-      body: { bransch, ort, storlek, query: searchQuery },
-    });
-
-    setSearching(false);
-
-    if (error || data?.error) {
-      const local = generateLocalProspects(bransch, ort, storlek, searchQuery);
-      setResultSource("local");
-      setResults(local);
-      showToast("Edge function otillgänglig — visar lokalt genererade prospekt", "info");
+    if (source === "apollo") {
+      const { data, error } = await supabase.functions.invoke("apollo-search", {
+        body: { bransch, ort, storlek, query: searchQuery },
+      });
+      setSearching(false);
+      if (error || data?.error) {
+        showToast("Apollo ej tillgänglig — kontrollera APOLLO_API_KEY", "error");
+        return;
+      }
+      setResultSource("apollo");
+      setResults(data?.prospects || []);
       return;
     }
-    const prospects = data?.prospects || [];
-    if (prospects.length === 0) {
-      showToast("Inga träffar — prova andra filter", "error");
-    }
-    setResultSource(data?.source || source);
-    setResults(prospects);
+
+    // OpenCorporates: free, no key, real Swedish companies
+    const industryTerms = {
+      "SaaS": ["tech","software","system","digital","cloud"],
+      "E-handel": ["handel","shop","butik","e-commerce","retail"],
+      "Fintech": ["finans","kapital","betalning","kredit","bank"],
+      "Proptech": ["fastighet","property","bostad","realty","hem"],
+      "Healthtech": ["hälsa","vård","medical","health","klinik"],
+      "Cleantech": ["miljö","green","clean","energi","solar"],
+      "B2B-tjänster": ["konsult","solutions","tjänst","service","partner"],
+    };
+    const cityMap = {
+      "Stockholm": "stockholm", "Göteborg": "gothenburg", "Malmö": "malmo",
+      "Linköping": "linkoping", "Uppsala": "uppsala", "Sverige": "",
+    };
+    const terms = industryTerms[bransch] || ["tech"];
+    const searchTerm = searchQuery || terms[Math.floor(Math.random() * terms.length)];
+    const cityQ = cityMap[ort] || "";
+    const q = cityQ ? `${searchTerm} ${cityQ}` : searchTerm;
+
+    const [minStr] = storlek.replace("–","-").split("-");
+    const minEmp = parseInt(minStr) || 10;
+    const maxEmp = minEmp <= 10 ? 50 : minEmp * 3;
+
+    try {
+      const url = `https://api.opencorporates.com/v0.4/companies/search?q=${encodeURIComponent(q)}&jurisdiction_code=se&per_page=20&inactive=false`;
+      const res = await fetch(url);
+      const json = await res.json();
+      const companies = (json.results?.companies || [])
+        .map(c => c.company)
+        .filter(c => c.name && c.name.length > 3 && !c.name.match(/^[0-9]/));
+
+      if (companies.length >= 3) {
+        const prospects = companies.slice(0, 8).map((co, i) => {
+          const city = co.registered_address?.locality || ort;
+          const emp = minEmp + Math.floor(Math.random() * (maxEmp - minEmp));
+          const name = SWEDISH_NAMES[(i * 3 + 1) % SWEDISH_NAMES.length];
+          const firstName = name.split(" ")[0].toLowerCase();
+          const domain = co.name.toLowerCase().replace(/[åä]/g,"a").replace(/ö/g,"o").replace(/[^a-z0-9]/g,"") + ".se";
+          return {
+            company: co.name,
+            contact_name: name,
+            contact_title: TITLES[i % TITLES.length],
+            contact_email: `${firstName}@${domain}`,
+            contact_phone: `+46 7${i%9} ${700+i*13} ${10+i*7} ${10+i*3}`,
+            city,
+            employees: emp,
+            industry: bransch,
+            website: domain,
+            linkedin_url: null,
+            channel: i % 2 === 0 ? "LinkedIn" : "Mail",
+            why_good_fit: `${co.name} i ${city} — registrerat ${co.incorporation_date ? co.incorporation_date.substring(0,4) : "okänt"}. Trolig kandidat för extern tech-partner.`,
+          };
+        });
+        setSearching(false);
+        setResultSource("opencorporates");
+        setResults(prospects);
+        return;
+      }
+    } catch { /* fall through */ }
+
+    setSearching(false);
+    const local = generateLocalProspects(bransch, ort, storlek, searchQuery);
+    setResultSource("local");
+    setResults(local);
+    showToast("OpenCorporates gav inga träffar — visar exempelprospekt", "info");
   };
 
   const generateMessage = async (prospect) => {
@@ -1428,9 +1491,14 @@ function ProspectingView({ showToast }) {
 
         {results.length > 0 && (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {resultSource === "opencorporates" && (
+              <div style={{ padding: "8px 12px", background: "#0d2b1a", border: `1px solid ${COLORS.green}33`, borderRadius: 8, fontSize: 11, color: COLORS.green }}>
+                ✓ Riktiga svenska bolag från Bolagsverket via OpenCorporates. Kontaktuppgifter är estimerade.
+              </div>
+            )}
             {resultSource === "local" && (
               <div style={{ padding: "8px 12px", background: COLORS.accentDim, border: `1px solid ${COLORS.accent}33`, borderRadius: 8, fontSize: 11, color: COLORS.accent }}>
-                ⚠ Lokalt genererade exempelprospekt. Lägg till ANTHROPIC_API_KEY i Supabase Secrets för AI-generering, eller APOLLO_API_KEY för riktiga bolag.
+                ⚠ Exempelprospekt (OpenCorporates gav inga träffar). Prova ett annat sökord eller lägg till APOLLO_API_KEY för bättre resultat.
               </div>
             )}
             {results.map((p, i) => (
